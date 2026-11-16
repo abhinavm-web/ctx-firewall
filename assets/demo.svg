@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 430" width="100%" height="100%">
+  <defs>
+    <style>
+      .bg { fill: #0d1117; stroke: #30363d; stroke-width: 1.5; }
+      .header { fill: #161b22; }
+      .panel { fill: #161b22; stroke: #30363d; stroke-width: 1; }
+      .title { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; font-size: 12px; fill: #8b949e; text-anchor: middle; }
+      .code { font-family: "JetBrains Mono", "Fira Code", Consolas, "Courier New", monospace; font-size: 12.5px; fill: #c9d1d9; }
+      .bold { font-weight: bold; fill: #f0f6fc; }
+      .ok { fill: #3fb950; font-weight: bold; }
+      .cyan { fill: #79c0ff; font-weight: bold; }
+      .yellow { fill: #d29922; font-weight: bold; }
+      .purple { fill: #d2a8ff; font-weight: bold; }
+      .muted { fill: #8b949e; }
+    </style>
+  </defs>
+  <rect class="bg" x="1" y="1" width="878" height="428" rx="10" ry="10"/>
+  <path class="header" d="M 1 11 Q 1 1 11 1 L 869 1 Q 879 1 879 11 L 879 36 L 1 36 Z"/>
+  <line x1="1" y1="36" x2="879" y2="36" stroke="#30363d" stroke-width="1"/>
+  <circle cx="20" cy="18" r="6" fill="#ff5f56"/>
+  <circle cx="40" cy="18" r="6" fill="#ffbd2e"/>
+  <circle cx="60" cy="18" r="6" fill="#27c93f"/>
+  <text class="title" x="440" y="22">ctx-firewall — Active Context Proxy &amp; KV-Cache-Safe Flamegraph TUI</text>
+
+  <!-- Top Telemetry Bar -->
+  <rect class="panel" x="18" y="48" width="844" height="58" rx="6"/>
+  <text class="code" x="32" y="72"><tspan class="cyan">ctx-firewall v0.1.0</tspan>  |  Listening: <tspan class="bold">127.0.0.1:8080</tspan>  |  KV-Cache Prefix Guard: <tspan class="ok">SEALED &amp; VERIFIED</tspan></text>
+  <text class="code" x="32" y="94">Turn: <tspan class="bold">#24</tspan>   |   Context: <tspan class="bold">64.2k / 200k</tspan>   |   Pruned Session Total: <tspan class="ok">148.6k tokens ($2.23 saved)</tspan>   |   Rot Score: <tspan class="ok">12/100 [LOW]</tspan></text>
+
+  <!-- Flamegraph Bar -->
+  <rect class="panel" x="18" y="118" width="844" height="84" rx="6"/>
+  <text class="code" x="32" y="140"><tspan class="bold">Live Context Window Flamegraph</tspan> <tspan class="muted">(Active In-Flight Pruning Enabled)</tspan></text>
+  <rect x="32" y="150" width="65" height="24" fill="#1f6feb" rx="2"/>
+  <rect x="99" y="150" width="75" height="24" fill="#8957e5" rx="2"/>
+  <rect x="176" y="150" width="110" height="24" fill="#d29922" rx="2"/>
+  <rect x="288" y="150" width="70" height="24" fill="#da3633" rx="2"/>
+  <rect x="360" y="150" width="486" height="24" fill="#238636" rx="2"/>
+  <text class="code" x="38" y="167" fill="#ffffff">SYS 8%</text>
+  <text class="code" x="106" y="167" fill="#ffffff">MCP 9%</text>
+  <text class="code" x="184" y="167" fill="#ffffff">FILES 13%</text>
+  <text class="code" x="294" y="167" fill="#ffffff">LOGS 8%</text>
+  <text class="code" x="540" y="167" fill="#ffffff">CONVERSATION HISTORY 62%</text>
+  <text class="code" x="32" y="192"><tspan class="muted">Stubbed 18 dormant MCP schemas (-11.4k tok)  |  Deduped 5 repeated file reads (-24.1k tok)  |  Folded cargo test stdout (-8.9k tok)</tspan></text>
+
+  <!-- Activity Log -->
+  <rect class="panel" x="18" y="214" width="844" height="196" rx="6"/>
+  <text class="code" x="32" y="236"><tspan class="bold">In-Flight Firewall Activity Log</tspan></text>
+  <text class="code" x="32" y="260"><tspan class="muted">[15:42:01]</tspan> <tspan class="cyan">Turn #21</tspan>  <tspan class="purple">[lazy_mcp]</tspan>           Stubbed 18 dormant MCP tool schemas (saved ~11,400 tokens)</text>
+  <text class="code" x="32" y="282"><tspan class="muted">[15:42:09]</tspan> <tspan class="cyan">Turn #22</tspan>  <tspan class="yellow">[ansi_strip, fold]</tspan>   Folded 420-line `cargo test` output -&gt; 50 lines (saved ~2,120 tokens)</text>
+  <text class="code" x="32" y="304"><tspan class="muted">[15:42:18]</tspan> <tspan class="cyan">Turn #23</tspan>  <tspan class="ok">[file_dedup]</tspan>         Elided duplicate read of `src/proxy/routes.rs` (sha256: 9f8a21c4, saved ~1,920 tokens)</text>
+  <text class="code" x="32" y="326"><tspan class="muted">[15:42:29]</tspan> <tspan class="cyan">Turn #24</tspan>  <tspan class="ok">[session_prefix_pin]</tspan> Re-pinned 3 historical pruned turns; upstream KV-cache hit 96.4%</text>
+  <text class="code" x="32" y="348"><tspan class="muted">[15:42:29]</tspan> <tspan class="cyan">Turn #24</tspan>  <tspan class="ok">[cache_guard]</tspan>        Sealed prefix SHA256 `b699110d71215c07...a86fd2971` verified byte-identical</text>
+  <text class="code" x="32" y="388"><tspan class="muted">[q] Quit   [c] Clear Stats   [d] Toggle File Dedup   [a] Toggle ANSI Strip   [m] Toggle Lazy MCP</tspan></text>
+</svg>
