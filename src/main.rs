@@ -82,17 +82,30 @@ async fn run_serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error + Se
 async fn run_check(
     args: ctx_firewall::config::CheckArgs,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let content = match args.file {
+    let raw_content = match args.file {
         Some(path) => std::fs::read_to_string(path)?,
         None => {
             eprintln!("No file provided. Please specify --file <path>");
             return Ok(());
         }
     };
+    let content = raw_content.trim_start_matches('\u{feff}');
 
-    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(content) {
         let breakdown = TokenEstimator::analyze_anthropic_request(&json);
-        let rot_score = RotScoreCalculator::calculate(0, 0, 0, breakdown.total_tokens);
+        let engine = PruningEngine::default();
+        let (_, report) = engine.prune_anthropic_payload(json.clone(), 1)?;
+        let stale_tokens = if report.rules_applied.iter().any(|r| r == "file_dedup") {
+            breakdown.file_content_tokens / 2
+        } else {
+            0
+        };
+        let rot_score = RotScoreCalculator::calculate(
+            stale_tokens,
+            breakdown.logs_tokens,
+            breakdown.tools_tokens,
+            breakdown.total_tokens,
+        );
         println!("Context Breakdown:");
         println!("  System Tokens:   {}", breakdown.system_tokens);
         println!("  Tools Tokens:    {}", breakdown.tools_tokens);
@@ -100,6 +113,12 @@ async fn run_check(
         println!("  Logs Tokens:     {}", breakdown.logs_tokens);
         println!("  Chat Tokens:     {}", breakdown.history_tokens);
         println!("  Total Tokens:    {}", breakdown.total_tokens);
+        println!("Pruning Simulation:");
+        println!("  Original Tail:   {} B", report.original_tail_bytes);
+        println!("  Pruned Tail:     {} B", report.pruned_tail_bytes);
+        println!("  Tokens Saved:    ~{}", report.estimated_tokens_saved);
+        println!("  Rules Triggered: {}", if report.rules_applied.is_empty() { "none".to_string() } else { report.rules_applied.join(", ") });
+        println!("  Prefix SHA256:   {}", report.sealed_prefix_hash);
         println!(
             "Rot Score: {}/100 [{}]",
             rot_score,
