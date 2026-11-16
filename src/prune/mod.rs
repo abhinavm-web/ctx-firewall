@@ -12,6 +12,7 @@ pub use mcp::McpOptimizer;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -56,6 +57,7 @@ pub struct PruningEngine {
     pub log_folder: LogFolder,
     pub file_tracker: Arc<Mutex<FileReadTracker>>,
     pub mcp_optimizer: Arc<Mutex<McpOptimizer>>,
+    pub pruned_turn_cache: Arc<Mutex<HashMap<[u8; 32], String>>>,
 }
 
 impl Default for PruningEngine {
@@ -72,7 +74,16 @@ impl PruningEngine {
             log_folder,
             file_tracker: Arc::new(Mutex::new(FileReadTracker::new())),
             mcp_optimizer: Arc::new(Mutex::new(McpOptimizer::default())),
+            pruned_turn_cache: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    fn hash_text(text: &str) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+        hasher.update(text.as_bytes());
+        let mut out = [0u8; 32];
+        out.copy_from_slice(&hasher.finalize());
+        out
     }
 
     /// Prunes an Anthropic request payload while verifying KV-cache prefix immutability.
@@ -86,14 +97,18 @@ impl PruningEngine {
             ..Default::default()
         };
 
-        // Extract tool_use ID to path map from assistant messages across the entire conversation
+        // Extract tool_use ID to path map and active tool names from assistant messages
         let mut tool_use_paths: HashMap<String, String> = HashMap::new();
         if let Some(messages) = payload.get("messages").and_then(|m| m.as_array()) {
+            let mut mcp_opt = self.mcp_optimizer.lock().unwrap();
             for msg in messages {
                 if msg.get("role").and_then(|r| r.as_str()) == Some("assistant") {
                     if let Some(content) = msg.get("content").and_then(|c| c.as_array()) {
                         for block in content {
                             if block.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
+                                if let Some(name) = block.get("name").and_then(|n| n.as_str()) {
+                                    mcp_opt.mark_active(name);
+                                }
                                 if let Some(id) = block.get("id").and_then(|i| i.as_str()) {
                                     if let Some(input) = block.get("input") {
                                         if let Some(path) = input.get("path").and_then(|p| p.as_str()) {
@@ -110,13 +125,29 @@ impl PruningEngine {
             }
         }
 
-        // Register file reads already present in historical messages into file_tracker
-        if let Some(messages) = payload.get("messages").and_then(|m| m.as_array()) {
-            if messages.len() > 1 {
-                let history_messages = &messages[0..messages.len() - 1];
+        // Apply lazy MCP tool schema stubbing if enabled
+        if self.config.enable_lazy_mcp {
+            if let Some(tools_arr) = payload.get_mut("tools").and_then(|t| t.as_array_mut()) {
+                let mcp_opt = self.mcp_optimizer.lock().unwrap();
+                let stubbed = mcp_opt.optimize_tools(tools_arr);
+                if stubbed > 0 {
+                    report.rules_applied.push("lazy_mcp".to_string());
+                }
+            }
+        }
+
+        // Deterministically re-pin previously pruned tool_results in historical messages
+        // so that multi-turn requests match upstream KV-cache prefixes byte-for-byte,
+        // and register file reads already present in historical messages into file_tracker.
+        let mut pinned_saved_bytes = 0usize;
+        if let Some(messages) = payload.get_mut("messages").and_then(|m| m.as_array_mut()) {
+            let len = messages.len();
+            if len > 1 {
+                let history_messages = &mut messages[0..len - 1];
                 let mut tracker = self.file_tracker.lock().unwrap();
+                let turn_cache = self.pruned_turn_cache.lock().unwrap();
                 for msg in history_messages {
-                    if let Some(content) = msg.get("content").and_then(|c| c.as_array()) {
+                    if let Some(content) = msg.get_mut("content").and_then(|c| c.as_array_mut()) {
                         for block in content {
                             if block.get("type").and_then(|t| t.as_str()) == Some("tool_result") {
                                 let path = block
@@ -125,14 +156,24 @@ impl PruningEngine {
                                     .and_then(|id| tool_use_paths.get(id))
                                     .cloned()
                                     .unwrap_or_default();
-                                if let Some(content_str) = block.get("content").and_then(|c| c.as_str()) {
-                                    tracker.register_history_read(&path, content_str, turn_id as usize);
+                                if let Some(content_val) = block.get_mut("content") {
+                                    if let Some(content_str) = content_val.as_str() {
+                                        tracker.register_history_read(&path, content_str, turn_id as usize);
+                                        let h = Self::hash_text(content_str);
+                                        if let Some(pinned_pruned) = turn_cache.get(&h) {
+                                            pinned_saved_bytes += content_str.len().saturating_sub(pinned_pruned.len());
+                                            *content_val = Value::String(pinned_pruned.clone());
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
                 }
             }
+        }
+        if pinned_saved_bytes > 0 {
+            report.rules_applied.push("session_prefix_pin".to_string());
         }
 
         // Identify prefix boundary
@@ -207,6 +248,13 @@ impl PruningEngine {
                                 }
                             }
 
+                            if current_text.len() < content_str.len() {
+                                let raw_hash = Self::hash_text(content_str);
+                                self.pruned_turn_cache
+                                    .lock()
+                                    .unwrap()
+                                    .insert(raw_hash, current_text.clone());
+                            }
                             pruned_bytes += current_text.len();
                             *content_val = Value::String(current_text);
                         }
@@ -223,9 +271,9 @@ impl PruningEngine {
         report.rules_applied.sort();
         report.rules_applied.dedup();
 
-        report.original_tail_bytes = original_bytes;
+        report.original_tail_bytes = original_bytes + pinned_saved_bytes;
         report.pruned_tail_bytes = pruned_bytes;
-        let bytes_saved = original_bytes.saturating_sub(pruned_bytes);
+        let bytes_saved = report.original_tail_bytes.saturating_sub(report.pruned_tail_bytes);
         report.estimated_tokens_saved = (bytes_saved as f64 / 3.8).round() as usize;
 
         Ok((payload, report))
@@ -357,5 +405,49 @@ impl PruningEngine {
         report.estimated_tokens_saved = (bytes_saved as f64 / 3.8).round() as usize;
 
         Ok((payload, report))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_multi_turn_session_stateful_prefix_pinning() {
+        let engine = PruningEngine::default();
+        let noisy_log = (1..=80)
+            .map(|i| format!("\x1b[32mCompiling\x1b[0m crate_{i}\nrunning test_{i} ... ok"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        // Turn 1: user sends tool_result with noisy_log as tail message
+        let turn1 = json!({
+            "messages": [
+                { "role": "user", "content": "run tests" },
+                { "role": "assistant", "content": [{ "type": "tool_use", "id": "t1", "name": "bash", "input": {} }] },
+                { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "t1", "content": noisy_log }] }
+            ]
+        });
+
+        let (pruned_turn1, rep1) = engine.prune_anthropic_payload(turn1, 1).expect("turn 1");
+        assert!(rep1.pruned_tail_bytes < rep1.original_tail_bytes);
+        let turn1_pruned_msg2 = pruned_turn1["messages"][2].clone();
+
+        // Turn 2: client re-sends raw unpruned noisy_log in history (index 2) plus new turn (index 3 & 4)
+        let turn2 = json!({
+            "messages": [
+                { "role": "user", "content": "run tests" },
+                { "role": "assistant", "content": [{ "type": "tool_use", "id": "t1", "name": "bash", "input": {} }] },
+                { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "t1", "content": noisy_log }] },
+                { "role": "assistant", "content": "Tests passed." },
+                { "role": "user", "content": "Now check clippy." }
+            ]
+        });
+
+        let (pruned_turn2, rep2) = engine.prune_anthropic_payload(turn2, 2).expect("turn 2");
+        assert!(rep2.rules_applied.contains(&"session_prefix_pin".to_string()));
+        // Historical message 2 in Turn 2 is byte-for-byte identical to the pruned message 2 from Turn 1!
+        assert_eq!(pruned_turn2["messages"][2], turn1_pruned_msg2);
     }
 }
