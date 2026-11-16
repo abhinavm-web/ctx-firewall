@@ -2,6 +2,7 @@
 
 **Active LLM context proxy and TUI flamegraph profiler that prunes context rot in-flight while preserving KV-cache hits.**
 
+[![CI](https://github.com/abhinavm-web/ctx-firewall/actions/workflows/ci.yml/badge.svg)](https://github.com/abhinavm-web/ctx-firewall/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-2021-orange.svg)](Cargo.toml)
 
@@ -40,11 +41,16 @@ Existing context profilers are passive viewers: they draw a chart showing your c
                     Upstream LLM API (KV-Cache Intact)
 ```
 
-## Installation
+## Installation & 30-Second Showcase
 
 ```bash
 git clone https://github.com/abhinavm-web/ctx-firewall.git
 cd ctx-firewall
+
+# Run the self-contained KV-cache-safe pruning showcase
+cargo run --example showcase
+
+# Or install the proxy & TUI binary globally
 cargo install --path .
 ```
 
