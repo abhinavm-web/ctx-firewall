@@ -1,0 +1,45 @@
+[package]
+name = "ctx-firewall"
+version = "0.1.0"
+edition = "2021"
+authors = ["Abhinav Mahajan <abhinavmahajan91@gmail.com>"]
+description = "Active LLM context proxy and TUI flamegraph profiler that prunes context rot in-flight while preserving KV-cache hits."
+repository = "https://github.com/abhinavm-web/ctx-firewall"
+license = "MIT"
+readme = "README.md"
+
+[dependencies]
+# Async Runtime & HTTP Server
+tokio = { version = "1.43", features = ["full"] }
+axum = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+
+# HTTP Client & Streaming
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "default-tls"] }
+futures-util = "0.3"
+futures = "0.3"
+tokio-stream = "0.1"
+bytes = "1.10"
+http = "1.2"
+
+# Terminal UI & Visualization
+ratatui = { version = "0.29", features = ["crossterm"] }
+crossterm = { version = "0.28", features = ["event-stream"] }
+
+# Serialization & CLI
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+
+# Hashing, Pruning & Utilities
+sha2 = "0.10"
+hex = "0.4"
+chrono = "0.4"
+
+# Logging & Telemetry
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tempfile = "3.17"
