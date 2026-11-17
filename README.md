@@ -48,7 +48,19 @@ Existing context profilers are passive viewers: they draw a chart showing your c
 
 ## Installation & 30-Second Showcase
 
-Download prebuilt binaries for Linux, macOS (Apple Silicon), and Windows from [GitHub Releases](https://github.com/abhinavm-web/ctx-firewall/releases/latest), or build from source:
+Install prebuilt binaries with one command, download directly from [GitHub Releases](https://github.com/abhinavm-web/ctx-firewall/releases/latest), or build from source:
+
+```bash
+# macOS (Apple Silicon) & Linux (x86_64)
+curl -fsSL https://raw.githubusercontent.com/abhinavm-web/ctx-firewall/main/install.sh | sh
+```
+
+```powershell
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/abhinavm-web/ctx-firewall/main/install.ps1 | iex
+```
+
+Or run from source:
 
 ```bash
 git clone https://github.com/abhinavm-web/ctx-firewall.git
