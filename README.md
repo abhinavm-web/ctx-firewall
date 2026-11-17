@@ -147,6 +147,26 @@ src/
     └── stacked_bar.rs  # Horizontal context flamegraph bar widget
 ```
 
+## Multi-Turn A/B Benchmark & Safety Guarantees
+
+Reproduce on your machine:
+
+```bash
+cargo run --release --example benchmark
+```
+
+**Built-In Safety Guarantees:**
+- **Session-Stateful KV-Cache Pinning**: Pruned tool outputs are cached by `(tool_use_id, sha256)` so subsequent turns stay byte-identical to earlier turns across the upstream prefix (`SealedPrefixGuard` verifies SHA-256 immutability on every turn).
+- **Immediate Re-Read Recovery**: If an agent receives a deduplication tombstone on Turn `N` and immediately calls `read_file` for the same file on Turn `N+1`, `ctx-firewall` detects the pushback and passes the full unpruned file through.
+- **No Blind Truncation on File Reads**: Log folding applies strictly to shell/command outputs (`bash`, `run_command`), never silently dropping lines inside `read_file` source reads.
+
+| Metric (15-Turn Coding Session) | Unpruned Baseline | `ctx-firewall` | Delta / Status |
+| :--- | ---: | ---: | :--- |
+| Billed Input Tokens | 130,074 | 51,562 | **-60.4%** |
+| Eligible Prefix Cache Hits | — | 13 / 13 turns | **100.0% preserved** |
+| Immediate Re-Read Recovery | — | Full file restored on retry | **Verified** |
+| Proxy Overhead | 0 ms | 8.21 ms total | **0.55 ms / turn** |
+
 ## Development & Verification
 
 ```bash

@@ -52,12 +52,14 @@ pub struct PruningReport {
     pub total_tokens: usize,
 }
 
+pub type PrunedTurnCache = Arc<Mutex<HashMap<(String, [u8; 32]), String>>>;
+
 pub struct PruningEngine {
     pub config: PruneConfig,
     pub log_folder: LogFolder,
     pub file_tracker: Arc<Mutex<FileReadTracker>>,
     pub mcp_optimizer: Arc<Mutex<McpOptimizer>>,
-    pub pruned_turn_cache: Arc<Mutex<HashMap<[u8; 32], String>>>,
+    pub pruned_turn_cache: PrunedTurnCache,
 }
 
 impl Default for PruningEngine {
@@ -150,17 +152,17 @@ impl PruningEngine {
                     if let Some(content) = msg.get_mut("content").and_then(|c| c.as_array_mut()) {
                         for block in content {
                             if block.get("type").and_then(|t| t.as_str()) == Some("tool_result") {
-                                let path = block
+                                let tool_id = block
                                     .get("tool_use_id")
                                     .and_then(|id| id.as_str())
-                                    .and_then(|id| tool_use_paths.get(id))
-                                    .cloned()
-                                    .unwrap_or_default();
+                                    .unwrap_or_default()
+                                    .to_string();
+                                let path = tool_use_paths.get(&tool_id).cloned().unwrap_or_default();
                                 if let Some(content_val) = block.get_mut("content") {
                                     if let Some(content_str) = content_val.as_str() {
                                         tracker.register_history_read(&path, content_str, turn_id as usize);
                                         let h = Self::hash_text(content_str);
-                                        if let Some(pinned_pruned) = turn_cache.get(&h) {
+                                        if let Some(pinned_pruned) = turn_cache.get(&(tool_id, h)) {
                                             pinned_saved_bytes += content_str.len().saturating_sub(pinned_pruned.len());
                                             *content_val = Value::String(pinned_pruned.clone());
                                         }
@@ -206,8 +208,9 @@ impl PruningEngine {
                     let tool_id = block
                         .get("tool_use_id")
                         .and_then(|id| id.as_str())
-                        .unwrap_or_default();
-                    let file_path = tool_use_paths.get(tool_id).cloned().unwrap_or_default();
+                        .unwrap_or_default()
+                        .to_string();
+                    let file_path = tool_use_paths.get(&tool_id).cloned().unwrap_or_default();
 
                     if let Some(content_val) = block.get_mut("content") {
                         if let Some(content_str) = content_val.as_str() {
@@ -223,16 +226,8 @@ impl PruningEngine {
                                 }
                             }
 
-                            // 2. Log Folding
-                            if self.config.enable_log_folding {
-                                let folded = self.log_folder.fold(&current_text);
-                                if folded.len() < current_text.len() {
-                                    report.rules_applied.push("log_folding".to_string());
-                                    current_text = folded.into_owned();
-                                }
-                            }
-
-                            // 3. File Read Deduplication
+                            // 2. File Read Deduplication (runs on full file content with pushback retry recovery)
+                            let mut was_deduped = false;
                             if self.config.enable_dedup {
                                 let (deduped_text, is_deduped, _bytes_saved) = {
                                     let mut tracker = self.file_tracker.lock().unwrap();
@@ -245,6 +240,16 @@ impl PruningEngine {
                                 if is_deduped {
                                     report.rules_applied.push("file_dedup".to_string());
                                     current_text = deduped_text;
+                                    was_deduped = true;
+                                }
+                            }
+
+                            // 3. Log Folding (only on non-file command/stdout outputs, never truncating source reads)
+                            if self.config.enable_log_folding && file_path.is_empty() && !was_deduped {
+                                let folded = self.log_folder.fold(&current_text);
+                                if folded.len() < current_text.len() {
+                                    report.rules_applied.push("log_folding".to_string());
+                                    current_text = folded.into_owned();
                                 }
                             }
 
@@ -253,7 +258,7 @@ impl PruningEngine {
                                 self.pruned_turn_cache
                                     .lock()
                                     .unwrap()
-                                    .insert(raw_hash, current_text.clone());
+                                    .insert((tool_id.clone(), raw_hash), current_text.clone());
                             }
                             pruned_bytes += current_text.len();
                             *content_val = Value::String(current_text);
@@ -369,14 +374,7 @@ impl PruningEngine {
                         }
                     }
 
-                    if self.config.enable_log_folding {
-                        let folded = self.log_folder.fold(&current_text);
-                        if folded.len() < current_text.len() {
-                            report.rules_applied.push("log_folding".to_string());
-                            current_text = folded.into_owned();
-                        }
-                    }
-
+                    let mut was_deduped = false;
                     if self.config.enable_dedup {
                         let (deduped_text, is_deduped, _bytes_saved) = {
                             let mut tracker = self.file_tracker.lock().unwrap();
@@ -385,6 +383,15 @@ impl PruningEngine {
                         if is_deduped {
                             report.rules_applied.push("file_dedup".to_string());
                             current_text = deduped_text;
+                            was_deduped = true;
+                        }
+                    }
+
+                    if self.config.enable_log_folding && file_path.is_empty() && !was_deduped {
+                        let folded = self.log_folder.fold(&current_text);
+                        if folded.len() < current_text.len() {
+                            report.rules_applied.push("log_folding".to_string());
+                            current_text = folded.into_owned();
                         }
                     }
 
